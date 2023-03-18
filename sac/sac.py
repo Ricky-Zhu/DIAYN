@@ -1,34 +1,38 @@
 import torch
 import numpy as np
-from models import SquashedGaussianMLPActor, MLPQFunction
+from models import SkillConditionActor, MLPQFunction
 from copy import deepcopy
+import os
 
 
 class SACAgent:
-    def __init__(self, env, test_env, args):
+    def __init__(self, env, args):
         self.env = env
-        self.test_env = test_env
         self.args = args
         self.device = self.args.device
+        self.save_path = './sac_DIAYN/'
 
         self.act_limit = self.env.action_space.high[0]
 
         # define the actor critic
         self.q1 = MLPQFunction(obs_dim=self.env.observation_space.shape[0],
                                act_dim=self.env.action_space.shape[0],
+                               skill_nums=self.args.skill_nums,
                                hidden_sizes=self.args.hidden_size).to(self.device)
 
         self.q2 = MLPQFunction(obs_dim=self.env.observation_space.shape[0],
                                act_dim=self.env.action_space.shape[0],
+                               skill_nums=self.args.skill_nums,
                                hidden_sizes=self.args.hidden_size).to(self.device)
 
         self.q1_targ = deepcopy(self.q1).to(self.device)
         self.q2_targ = deepcopy(self.q2).to(self.device)
 
-        self.actor = SquashedGaussianMLPActor(obs_dim=self.env.observation_space.shape[0],
-                                              act_dim=self.env.action_space.shape[0],
-                                              hidden_sizes=self.args.hidden_size,
-                                              act_limit=self.act_limit).to(self.device)
+        self.actor = SkillConditionActor(obs_dim=self.env.observation_space.shape[0],
+                                         skill_dim=self.args.skill_nums,
+                                         act_dim=self.env.action_space.shape[0],
+                                         hidden_sizes=self.args.hidden_size,
+                                         act_limit=self.act_limit).to(self.device)
 
         # define the optimizer for them
         self.q1_optim = torch.optim.Adam(self.q1.parameters(), lr=self.args.q_lr)
@@ -36,18 +40,18 @@ class SACAgent:
         # the optimizer for the policy network
         self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.args.p_lr)
 
-    def _compute_q_loss(self, o, a, r, o2, d):
-        q1 = self.q1(o, a)
-        q2 = self.q2(o, a)
+    def _compute_q_loss(self, o, a, r, o2, d, z):
+        q1 = self.q1(o, z, a)
+        q2 = self.q2(o, z, a)
 
         # Bellman backup for Q functions
         with torch.no_grad():
             # Target actions come from *current* policy
-            a2, logp_a2 = self.actor(o2)
+            a2, logp_a2 = self.actor(torch.concat([o2, z], dim=-1))
 
             # Target Q-values
-            q1_pi_targ = self.q1_targ(o2, a2)
-            q2_pi_targ = self.q2_targ(o2, a2)
+            q1_pi_targ = self.q1_targ(o2, z, a2)
+            q2_pi_targ = self.q2_targ(o2, z, a2)
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
             backup = self.args.reward_scale * r + self.args.gamma * (1 - d) * (
                     q_pi_targ - self.args.alpha * logp_a2)
@@ -58,20 +62,20 @@ class SACAgent:
 
         return loss_q1, loss_q2
 
-    def _compute_pi_loss(self, o, a, r, o2, d):
-        a_new, a_new_logprobs = self.actor(o)
+    def _compute_pi_loss(self, o, z):
+        a_new, a_new_logprobs = self.actor(torch.concat([o, z], dim=-1))
 
-        q1_pi = self.q1(o, a_new)
-        q2_pi = self.q2(o, a_new)
+        q1_pi = self.q1(o, z, a_new)
+        q2_pi = self.q2(o, z, a_new)
         q_pi = torch.min(q1_pi, q2_pi)
 
         loss_pi = (self.args.alpha * a_new_logprobs - q_pi).mean()
         return loss_pi
 
     def update(self, data):
-        o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
-        loss_pi = self._compute_pi_loss(o, a, r, o2, d)
-        loss_q1, loss_q2 = self._compute_q_loss(o, a, r, o2, d)
+        o, a, r, o2, d, z = data['obs'], data['act'], data['rew'], data['obs2'], data['done'], data['skills']
+        loss_pi = self._compute_pi_loss(o, z)
+        loss_q1, loss_q2 = self._compute_q_loss(o, a, r, o2, d, z)
 
         # update the networks
         self.actor_optim.zero_grad()
@@ -96,8 +100,28 @@ class SACAgent:
         for target_param, param in zip(target.parameters(), source.parameters()):
             target_param.data.copy_(self.args.polyak * param.data + (1 - self.args.polyak) * target_param.data)
 
-    def get_action(self, o, deterministic=False):
-        o = torch.as_tensor(o, dtype=torch.float32).to(self.device)
+    def get_action(self, o, skill, deterministic=False):
+        obs_skill = np.concatenate([o, skill], axis=-1)
+        obs_skill = torch.as_tensor(obs_skill, dtype=torch.float32).to(self.device)
         with torch.no_grad():
-            a, _ = self.actor(o, deterministic, False)
-            return a.cpu().numpy()
+            a, _ = self.actor(obs_skill, deterministic, False)
+        return a.cpu().numpy()
+
+    def save_model(self):
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path)
+        torch.save({'actor': self.actor.state_dict(),
+                    'q1': self.q1.state_dict(),
+                    'q2': self.q2.state_dict()}, self.save_path + 'agent_model.pt')
+
+    def load_model(self, path=None):
+        if path == None:
+            path = self.save_path + 'agent_model.pt'
+
+        try:
+            check_point = torch.load(path)
+            self.actor.load_state_dict(check_point['actor'])
+            self.q1.load_state_dict(check_point['q1'])
+            self.q2.load_state_dict(check_point['q2'])
+        except:
+            print('specify a model load path')

@@ -1,68 +1,87 @@
 from sac import SACAgent
+from discriminator import SkillDiscriminator
 from buffer import ReplayBuffer
 import numpy as np
 import torch
+import wandb
 
 
-def train_loop(env, test_env, args):
-    agent = SACAgent(env, test_env, args)
+def get_one_hot_encode_skill(skill_nums):
+    skill = np.random.randint(skill_nums)
+    skill_one_hot = np.zeros(skill_nums)
+    skill_one_hot[skill] = 1
+    return skill_one_hot
+
+
+def train_loop(env, args):
+    wandb.login()
+    wandb.init(
+        project="DIAYN_{}".format(args.env),
+        config=vars(args)
+    )
+
+    agent = SACAgent(env, args)
     buffer = ReplayBuffer(env.observation_space.shape[0],
                           env.action_space.shape[0],
                           args.buffer_size,
+                          args.skill_nums,
                           args.device)
-    total_interaction_steps = 0
+    discriminator = SkillDiscriminator(obs_dim=env.observation_space.shape[0],
+                                       skill_nums=args.skill_nums,
+                                       hidden_size=args.hidden_size,
+                                       lr=args.d_lr,
+                                       device=args.device).to(args.device)
 
-    # initialize the buffer
-    o = env.reset()
-    for i in range(args.initialize_buffer_steps):
-        a = env.action_space.sample()
-        o2, r, d, _ = env.step(a)
-        buffer.store(o, a, r, o2, d)
-        if d:
-            env.reset()
+    total_interaction_steps = 0
 
     for epoch in range(args.total_epochs):
         for ep in range(args.episodes_per_epoch):
             o = env.reset()
 
+            # sample the skill, as the skill dist is uniform to ensure max entropy
+            # make the skill one-hot
+            z = get_one_hot_encode_skill(args.skill_nums)
+
             for i in range(args.max_episode_length):
-                a = agent.get_action(o)
-                o2, r, d, _ = env.step(a)
+                a = agent.get_action(o, z)
+                o2, r, d, _ = env.step(a)  # the reward here is not going to be used
                 total_interaction_steps += 1
 
-                buffer.store(o, a, r, o2, d)
+                buffer.store(o, a, r, o2, d, z)
                 o = o2
                 if d:
-                    o = env.reset()
+                    break
 
             for _ in range(args.update_cycles):
                 data = buffer.sample_batch(batch_size=args.batch_size)
-                agent.update(data)
 
-        if (epoch + 1) % args.evaluate_interval_epochs == 0:
-            average_return = 0
-            for i in range(args.evaluation_nums):
-                o = test_env.reset()
-                d = False
-                while not d:
-                    a = agent.get_action(o, deterministic=True)
-                    o2, r, d, _ = test_env.step(a)
-                    average_return += r
-                    o = o2
-            average_return /= args.evaluation_nums
-            print('epoch:{}/{}, total interaction steps:{}, average return:{}'.format(epoch, args.total_epochs,
-                                                                                      total_interaction_steps,
-                                                                                      average_return))
+                # get the reward given in DIAYN
+                d_loss, rewards = discriminator.update(data)
+
+                # replace the rewards part in data
+                data['rew'] = rewards
+                loss_pi, loss_q1, loss_q2 = agent.update(data)
+
+                wandb.log({'discriminator loss': d_loss,
+                           'actor loss': loss_pi,
+                           'q1 loss': loss_q1,
+                           'q2 loss': loss_q2}, step=total_interaction_steps)
+
+        agent.save_model()
+        discriminator.save_model()
 
 
 if __name__ == "__main__":
     import argparse
     import gym
+    from goal_env.mujoco import *
+    from wrapper import WrapperDictEnv
 
     parser = argparse.ArgumentParser()
 
     # env parameters
-    parser.add_argument('--env', type=str, default='HalfCheetah-v2')
+    # parser.add_argument('--env', type=str, default='HalfCheetah-v2')
+    parser.add_argument('--env', type=str, default='AntEmpty-v0')
 
     # agent parameters
     parser.add_argument('--hidden-size', type=int, default=256)
@@ -73,6 +92,10 @@ if __name__ == "__main__":
     parser.add_argument('--p-lr', type=float, default=3e-4)
     parser.add_argument('--reward-scale', type=int, default=1)
     parser.add_argument('--device', type=str, default='cuda')
+
+    # discriminator params
+    parser.add_argument('--skill-nums', type=int, default=20)
+    parser.add_argument('--d-lr', type=float, default=3e-4)
 
     # buffer parameters
     parser.add_argument('--batch-size', type=int, default=256)
@@ -92,14 +115,12 @@ if __name__ == "__main__":
 
     ##########################################################################
     env = gym.make(args.env)
+    env = WrapperDictEnv(env)
     env.seed(args.seed)
     env.action_space.seed(args.seed)  # to ensure during the early random exploration the data the same
-
-    test_env = gym.make(args.env)
-    test_env.seed(args.seed + 100)
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    train_loop(env, test_env, args)
+    train_loop(env, args)
