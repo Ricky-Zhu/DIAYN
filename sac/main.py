@@ -41,6 +41,7 @@ def train_loop(env, args):
             # sample the skill, as the skill dist is uniform to ensure max entropy
             # make the skill one-hot
             z = get_one_hot_encode_skill(args.skill_nums)
+            logq_zs = []
 
             for i in range(args.max_episode_length):
                 a = agent.get_action(o, z)
@@ -52,21 +53,24 @@ def train_loop(env, args):
                 if d:
                     break
 
-            for _ in range(args.update_cycles):
-                data = buffer.sample_batch(batch_size=args.batch_size)
+                if buffer.current_size >= args.batch_size:
+                    data = buffer.sample_batch(batch_size=args.batch_size)
 
-                # get the reward given in DIAYN
-                rewards = discriminator.get_score(data)
-                d_loss = discriminator.update(data)
+                    # get the reward given in DIAYN
+                    rewards = discriminator.get_score(data)
+                    d_loss = discriminator.update(data)
+                    logq_zs.append(-d_loss)
 
-                # replace the rewards part in data
-                data['rew'] = rewards
-                loss_pi, loss_q1, loss_q2 = agent.update(data)
+                    # replace the rewards part in data
+                    data['rew'] = rewards
+                    loss_pi, loss_q1, loss_q2 = agent.update(data)
 
-                wandb.log({'discriminator loss': d_loss,
-                           'actor loss': loss_pi,
-                           'q1 loss': loss_q1,
-                           'q2 loss': loss_q2}, step=total_interaction_steps)
+                    wandb.log({'discriminator loss': d_loss,
+                               'actor loss': loss_pi,
+                               'q1 loss': loss_q1,
+                               'q2 loss': loss_q2}, step=total_interaction_steps)
+            if len(logq_zs) > 0:
+                wandb.log({'logq_zs': sum(logq_zs) / len(logq_zs)}, step=total_interaction_steps)
 
         agent.save_model()
         discriminator.save_model()
@@ -81,8 +85,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # env parameters
-    # parser.add_argument('--env', type=str, default='HalfCheetah-v2')
-    parser.add_argument('--env', type=str, default='AntEmpty-v0')
+    parser.add_argument('--env', type=str, default='Hopper-v2')
+    # parser.add_argument('--env', type=str, default='AntEmpty-v0')
 
     # agent parameters
     parser.add_argument('--hidden-size', type=int, default=256)
@@ -116,7 +120,6 @@ if __name__ == "__main__":
 
     ##########################################################################
     env = gym.make(args.env)
-    env = WrapperDictEnv(env)
     env.seed(args.seed)
     env.action_space.seed(args.seed)  # to ensure during the early random exploration the data the same
 

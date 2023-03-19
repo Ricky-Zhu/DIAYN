@@ -27,6 +27,10 @@ class ReplayBuffer:
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
 
+    @property
+    def current_size(self):
+        return self.size
+
     def sample_batch(self, batch_size=32):
         idxs = np.random.randint(0, self.size, size=batch_size)
         batch = dict(obs=self.obs_buf[idxs],
@@ -36,11 +40,3 @@ class ReplayBuffer:
                      done=self.done_buf[idxs],
                      skills=self.skill_buf[idxs])
         return {k: torch.as_tensor(v, dtype=torch.float32, device=self.device) for k, v in batch.items()}
-
-
-if __name__ == "__main__":
-    obs_dim, act_dim, size = 28, 3, 100
-    buffer = ReplayBuffer(obs_dim, act_dim, size)
-    for i in range(100):
-        buffer.store(np.random.random(28), np.random.random(3), 1., np.random.random(28), True)
-    x = buffer.sample_batch()

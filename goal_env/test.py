@@ -1,7 +1,7 @@
 import gym
-from goal_env.mujoco import *
 
-env = gym.make('AntEmpty-v0')
+
+env = gym.make('Hopper-v2')
 s=env.reset()
 
 for i in range(1000):
