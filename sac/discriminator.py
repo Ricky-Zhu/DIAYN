@@ -4,7 +4,7 @@ import torch.nn as nn
 
 
 class SkillDiscriminator(nn.Module):
-    def __init__(self, obs_dim, skill_nums, hidden_size, lr, device):
+    def __init__(self, obs_dim, skill_nums, hidden_size, lr, device, env_name):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(obs_dim, hidden_size),
                                  nn.ReLU(),
@@ -18,16 +18,16 @@ class SkillDiscriminator(nn.Module):
         self.skill_nums = skill_nums
         self.optim = torch.optim.Adam(params=self.net.parameters(), lr=lr)
 
-        self.save_path = './sac_DIAYN/'
+        self.save_path = './sac_DIAYN/{}'.format(env_name)
 
     def forward(self, obs):
         skill_logits = self.net(obs)
         return skill_logits
 
-    def get_score(self,data):
+    def get_score(self, data):
         o2 = data['obs2']
         z = data['skills']
-        pred_skills = self(o2) # get the predict logits of the skills
+        pred_skills = self(o2)  # get the predict logits of the skills
         targ_skill_probs = (self.softmax(pred_skills.clone().detach()) * z).sum(-1)
         score = torch.log(targ_skill_probs) - self.static_log_skill_prob
         return score

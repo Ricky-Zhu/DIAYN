@@ -13,6 +13,23 @@ def get_one_hot_encode_skill(skill_nums):
     return skill_one_hot
 
 
+def play(env, args):
+    skill_nums = args.skill_nums
+    agent = SACAgent(env, args)
+    agent.load_model()
+    for skill in range(skill_nums):
+        skill_one_hot = np.zeros(skill_nums)
+        skill_one_hot[skill] = 1
+
+        obs = env.reset()
+        d = False
+        while not d:
+            a = agent.get_action(obs, skill_one_hot, deterministic=True)
+
+            img = env.render()
+            obs2, r, d, _ = env.step(a)
+
+
 def train_loop(env, args):
     wandb.login()
     wandb.init(
@@ -30,7 +47,8 @@ def train_loop(env, args):
                                        skill_nums=args.skill_nums,
                                        hidden_size=args.hidden_size,
                                        lr=args.d_lr,
-                                       device=args.device).to(args.device)
+                                       device=args.device,
+                                       env_name=args.env).to(args.device)
 
     total_interaction_steps = 0
 
@@ -85,7 +103,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # env parameters
-    parser.add_argument('--env', type=str, default='Hopper-v2')
+    parser.add_argument('--env', type=str, default='Ant-v2')
     # parser.add_argument('--env', type=str, default='AntEmpty-v0')
 
     # agent parameters
@@ -120,6 +138,7 @@ if __name__ == "__main__":
 
     ##########################################################################
     env = gym.make(args.env)
+    # env = WrapperDictEnv(env)
     env.seed(args.seed)
     env.action_space.seed(args.seed)  # to ensure during the early random exploration the data the same
 
@@ -127,4 +146,6 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    #########################################################################
     train_loop(env, args)
+    # play(env, args)

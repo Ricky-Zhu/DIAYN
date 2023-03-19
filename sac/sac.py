@@ -10,7 +10,7 @@ class SACAgent:
         self.env = env
         self.args = args
         self.device = self.args.device
-        self.save_path = './sac_DIAYN/'
+        self.save_path = './sac_DIAYN/{}'.format(args.env)
 
         self.act_limit = self.env.action_space.high[0]
 
