@@ -34,8 +34,6 @@ def train_loop(env, test_env, args):
                 o = o2
                 if d:
                     o = env.reset()
-
-            for _ in range(args.update_cycles):
                 data = buffer.sample_batch(batch_size=args.batch_size)
                 agent.update(data)
 
