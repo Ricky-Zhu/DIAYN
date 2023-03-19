@@ -56,7 +56,8 @@ def train_loop(env, args):
                 data = buffer.sample_batch(batch_size=args.batch_size)
 
                 # get the reward given in DIAYN
-                d_loss, rewards = discriminator.update(data)
+                rewards = discriminator.get_score(data)
+                d_loss = discriminator.update(data)
 
                 # replace the rewards part in data
                 data['rew'] = rewards
