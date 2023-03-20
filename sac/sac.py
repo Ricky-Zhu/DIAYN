@@ -40,18 +40,18 @@ class SACAgent:
         # the optimizer for the policy network
         self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.args.p_lr)
 
-    def _compute_q_loss(self, o, a, r, o2, d, z):
-        q1 = self.q1(o, z, a)
-        q2 = self.q2(o, z, a)
+    def _compute_q_loss(self, o, a, r, o2, d, z_one_hot):
+        q1 = self.q1(o, z_one_hot, a)
+        q2 = self.q2(o, z_one_hot, a)
 
         # Bellman backup for Q functions
         with torch.no_grad():
             # Target actions come from *current* policy
-            a2, logp_a2 = self.actor(torch.concat([o2, z], dim=-1))
+            a2, logp_a2 = self.actor(torch.concat([o2, z_one_hot], dim=-1))
 
             # Target Q-values
-            q1_pi_targ = self.q1_targ(o2, z, a2)
-            q2_pi_targ = self.q2_targ(o2, z, a2)
+            q1_pi_targ = self.q1_targ(o2, z_one_hot, a2)
+            q2_pi_targ = self.q2_targ(o2, z_one_hot, a2)
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
             backup = self.args.reward_scale * r + self.args.gamma * (1 - d) * (
                     q_pi_targ - self.args.alpha * logp_a2)
@@ -73,9 +73,9 @@ class SACAgent:
         return loss_pi
 
     def update(self, data):
-        o, a, r, o2, d, z = data['obs'], data['act'], data['rew'], data['obs2'], data['done'], data['skills']
-        loss_pi = self._compute_pi_loss(o, z)
-        loss_q1, loss_q2 = self._compute_q_loss(o, a, r, o2, d, z)
+        o, a, r, o2, d, z_one_hot = data['obs'], data['act'], data['rew'], data['obs2'], data['done'], data['skills']
+        loss_pi = self._compute_pi_loss(o, z_one_hot)
+        loss_q1, loss_q2 = self._compute_q_loss(o, a, r, o2, d, z_one_hot)
 
         # update the networks
         self.actor_optim.zero_grad()

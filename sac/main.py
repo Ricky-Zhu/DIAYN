@@ -3,14 +3,15 @@ from discriminator import SkillDiscriminator
 from buffer import ReplayBuffer
 import numpy as np
 import torch
-import wandb
+import datetime
+from tqdm import tqdm
 
 
 def get_one_hot_encode_skill(skill_nums):
     skill = np.random.randint(skill_nums)
     skill_one_hot = np.zeros(skill_nums)
     skill_one_hot[skill] = 1
-    return skill_one_hot
+    return skill_one_hot, skill
 
 
 def play(env, args):
@@ -31,12 +32,6 @@ def play(env, args):
 
 
 def train_loop(env, args):
-    wandb.login()
-    wandb.init(
-        project="DIAYN_{}".format(args.env),
-        config=vars(args)
-    )
-
     agent = SACAgent(env, args)
     buffer = ReplayBuffer(env.observation_space.shape[0],
                           env.action_space.shape[0],
@@ -52,46 +47,62 @@ def train_loop(env, args):
 
     total_interaction_steps = 0
 
-    for epoch in range(args.total_epochs):
-        for ep in range(args.episodes_per_epoch):
-            o = env.reset()
+    for ep in range(args.total_episodes):
+        o = env.reset()
+        episode_rew = 0
+        episode_len = 0
 
-            # sample the skill, as the skill dist is uniform to ensure max entropy
-            # make the skill one-hot
-            z = get_one_hot_encode_skill(args.skill_nums)
-            logq_zs = []
+        # sample the skill, as the skill dist is uniform to ensure max entropy
+        # make the skill one-hot
+        z_one_hot, z = get_one_hot_encode_skill(args.skill_nums)
+        logq_zs = []
 
-            for i in range(args.max_episode_length):
-                a = agent.get_action(o, z)
-                o2, r, d, _ = env.step(a)  # the reward here is not going to be used
-                total_interaction_steps += 1
+        for i in tqdm(range(args.max_episode_length)):
+            a = agent.get_action(o, z_one_hot)
+            o2, r, d, _ = env.step(a)  # the reward here is not going to be used
 
-                buffer.store(o, a, r, o2, d, z)
-                o = o2
-                if d:
-                    break
+            episode_rew += r  # record the task rew
+            episode_len += 1
+            total_interaction_steps += 1
 
-                if buffer.current_size >= args.batch_size:
-                    data = buffer.sample_batch(batch_size=args.batch_size)
+            buffer.store(o, a, r, o2, d, z_one_hot)
+            o = o2
+            if d:
+                break
 
-                    # get the reward given in DIAYN
-                    rewards = discriminator.get_score(data)
-                    d_loss = discriminator.update(data)
-                    logq_zs.append(-d_loss)
+            if buffer.current_size >= args.batch_size:
+                data = buffer.sample_batch(batch_size=args.batch_size)
 
-                    # replace the rewards part in data
-                    data['rew'] = rewards
-                    loss_pi, loss_q1, loss_q2 = agent.update(data)
+                # get the reward given in DIAYN
+                rewards = discriminator.get_score(data)
 
-                    wandb.log({'discriminator loss': d_loss,
-                               'actor loss': loss_pi,
-                               'q1 loss': loss_q1,
-                               'q2 loss': loss_q2}, step=total_interaction_steps)
-            if len(logq_zs) > 0:
-                wandb.log({'logq_zs': sum(logq_zs) / len(logq_zs)}, step=total_interaction_steps)
+                # replace the rewards part in data
+                data['rew'] = rewards
+                loss_pi, loss_q1, loss_q2 = agent.update(data)
 
-        agent.save_model()
-        discriminator.save_model()
+                # update the discriminator
+                d_loss = discriminator.update(data)
+                logq_zs.append(-d_loss)
+
+                # wandb.log({'discriminator loss': d_loss,
+                #            'actor loss': loss_pi,
+                #            'q1 loss': loss_q1,
+                #            'q2 loss': loss_q2}, step=total_interaction_steps)
+        if len(logq_zs) > 0:
+            logq_zs = sum(logq_zs) / len(logq_zs)
+
+        # display training results
+        if ep % args.display_episode_interval == 0:
+            print('time:{} | episode:{}, sampled skill:{}/{}, episode_reward:{}, episode length:{}'.format(
+                datetime.datetime.now().strftime("%H:%M:%S"),
+                ep,
+                z, args.skill_nums,
+                episode_rew,
+                episode_len
+            ))
+
+    agent.save_model()
+    discriminator.save_model()
 
 
 if __name__ == "__main__":
@@ -103,13 +114,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # env parameters
-    parser.add_argument('--env', type=str, default='Ant-v2')
+    parser.add_argument('--env', type=str, default='Hopper-v2')
     # parser.add_argument('--env', type=str, default='AntEmpty-v0')
 
     # agent parameters
     parser.add_argument('--hidden-size', type=int, default=256)
     parser.add_argument('--gamma', type=float, default=0.99)
-    parser.add_argument('--alpha', type=float, default=0.2)
+    parser.add_argument('--alpha', type=float, default=0.1)
     parser.add_argument('--polyak', type=float, default=0.005)
     parser.add_argument('--q-lr', type=float, default=3e-4)
     parser.add_argument('--p-lr', type=float, default=3e-4)
@@ -126,14 +137,14 @@ if __name__ == "__main__":
 
     # training parameters
     parser.add_argument('--exp_name', type=str, default='sac')
-    parser.add_argument('--seed', '-s', type=int, default=44)
-    parser.add_argument('--total-epochs', type=int, default=300)
-    parser.add_argument('--episodes-per-epoch', type=int, default=1)
+    parser.add_argument('--seed', '-s', type=int, default=100)
+    parser.add_argument('--total-episodes', type=int, default=5000)
     parser.add_argument('--initialize-buffer-steps', type=int, default=10000)
     parser.add_argument('--max-episode-length', type=int, default=1000)
     parser.add_argument('--update-cycles', type=int, default=1000)
     parser.add_argument('--evaluate-interval-epochs', type=int, default=5)
     parser.add_argument('--evaluation-nums', type=int, default=5)
+    parser.add_argument('--display-episode-interval', type=int, default=100)
     args = parser.parse_args()
 
     ##########################################################################
