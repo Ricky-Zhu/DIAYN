@@ -47,7 +47,7 @@ def train_loop(env, args):
 
     total_interaction_steps = 0
 
-    for ep in range(args.total_episodes):
+    for ep in tqdm(range(args.total_episodes)):
         o = env.reset()
         episode_rew = 0
         episode_len = 0
@@ -57,7 +57,7 @@ def train_loop(env, args):
         z_one_hot, z = get_one_hot_encode_skill(args.skill_nums)
         logq_zs = []
 
-        for i in tqdm(range(args.max_episode_length)):
+        for i in range(args.max_episode_length):
             a = agent.get_action(o, z_one_hot)
             o2, r, d, _ = env.step(a)  # the reward here is not going to be used
 
