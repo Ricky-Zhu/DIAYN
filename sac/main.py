@@ -134,8 +134,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # env parameters
-    parser.add_argument('--env', type=str, default='Hopper-v2')
-    # parser.add_argument('--env', type=str, default='AntEmpty-v0')
+    # parser.add_argument('--env', type=str, default='Hopper-v2')
+    parser.add_argument('--env', type=str, default='AntEmpty-v0')
 
     # agent parameters
     parser.add_argument('--hidden-size', type=int, default=256)
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     # training parameters
     parser.add_argument('--exp_name', type=str, default='sac')
     parser.add_argument('--seed', '-s', type=int, default=100)
-    parser.add_argument('--total-episodes', type=int, default=5000)
+    parser.add_argument('--total-episodes', type=int, default=3000)
     parser.add_argument('--initialize-buffer-steps', type=int, default=10000)
     parser.add_argument('--max-episode-length', type=int, default=1000)
     parser.add_argument('--update-cycles', type=int, default=1000)
@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     ##########################################################################
     env = gym.make(args.env)
-    # env = WrapperDictEnv(env)
+    env = WrapperDictEnv(env)
     env.seed(args.seed)
     env.action_space.seed(args.seed)  # to ensure during the early random exploration the data the same
 
@@ -178,5 +178,5 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
 
     #########################################################################
-    # train_loop(env, args)
-    play(env, args)
+    train_loop(env, args)
+    # play(env, args)
