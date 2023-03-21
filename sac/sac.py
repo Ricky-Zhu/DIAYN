@@ -102,10 +102,12 @@ class SACAgent:
 
     def get_action(self, o, skill, deterministic=False):
         obs_skill = np.concatenate([o, skill], axis=-1)
-        obs_skill = torch.as_tensor(obs_skill, dtype=torch.float32).to(self.device)
+        obs_skill = torch.as_tensor(obs_skill[None, :], dtype=torch.float32).to(self.device)
+        self.actor.eval()
         with torch.no_grad():
             a, _ = self.actor(obs_skill, deterministic, False)
-        return a.cpu().numpy()
+        self.actor.train()
+        return a.cpu().numpy().squeeze()
 
     def save_model(self):
         if not os.path.exists(self.save_path):

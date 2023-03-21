@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     ##########################################################################
     env = gym.make(args.env)
-    env = WrapperDictEnv(env)
+    # env = WrapperDictEnv(env)
     env.seed(args.seed)
     env.action_space.seed(args.seed)  # to ensure during the early random exploration the data the same
 

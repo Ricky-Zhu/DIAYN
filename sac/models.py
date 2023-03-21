@@ -13,8 +13,10 @@ class SquashedGaussianMLPActor(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, act_limit):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(obs_dim, hidden_sizes),
+                                 nn.BatchNorm1d(hidden_sizes),
                                  nn.ReLU(),
                                  nn.Linear(hidden_sizes, hidden_sizes),
+                                 nn.BatchNorm1d(hidden_sizes),
                                  nn.ReLU())
         self.mu_layer = nn.Linear(hidden_sizes, act_dim)
         self.log_std_layer = nn.Linear(hidden_sizes, act_dim)
@@ -65,26 +67,6 @@ class MLPQFunction(nn.Module):
     def forward(self, obs, skill, act):
         q = self.q(torch.cat([obs, skill, act], dim=-1))
         return torch.squeeze(q, -1)
-
-
-class MLPActorCritic(nn.Module):
-
-    def __init__(self, observation_space, action_space, hidden_sizes=256):
-        super().__init__()
-
-        obs_dim = observation_space.shape[0]
-        act_dim = action_space.shape[0]
-        act_limit = action_space.high[0]
-
-        # build policy and value functions
-        self.pi = SquashedGaussianMLPActor(obs_dim, act_dim, hidden_sizes, act_limit)
-        self.q1 = MLPQFunction(obs_dim, act_dim, hidden_sizes)
-        self.q2 = MLPQFunction(obs_dim, act_dim, hidden_sizes)
-
-    def act(self, obs, deterministic=False):
-        with torch.no_grad():
-            a, _ = self.pi(obs, deterministic, False)
-            return a.cpu().numpy()
 
 
 class SkillConditionActor(SquashedGaussianMLPActor):
