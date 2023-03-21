@@ -4,6 +4,8 @@ from buffer import ReplayBuffer
 import numpy as np
 import torch
 import datetime
+import cv2
+import os
 from tqdm import tqdm
 
 
@@ -15,20 +17,38 @@ def get_one_hot_encode_skill(skill_nums):
 
 
 def play(env, args):
-    skill_nums = args.skill_nums
+    from mujoco_py import GlfwContext
+    GlfwContext(offscreen=True)
     agent = SACAgent(env, args)
     agent.load_model()
-    for skill in range(skill_nums):
-        skill_one_hot = np.zeros(skill_nums)
-        skill_one_hot[skill] = 1
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
 
-        obs = env.reset()
-        d = False
-        while not d:
-            a = agent.get_action(obs, skill_one_hot, deterministic=True)
+    # make the dir to store the videos
+    if not os.path.exists("Vid/{}/".format(args.env)):
+        os.makedirs("Vid/{}/".format(args.env))
 
-            img = env.render()
-            obs2, r, d, _ = env.step(a)
+    for z in range(args.skill_nums):
+        video_writer = cv2.VideoWriter(f"Vid/skill{z}" + ".avi", fourcc, 50.0, (250, 250))
+        s = env.reset()
+        episode_reward = 0
+        z_one_hot = np.zeros(args.skill_nums)
+        z_one_hot[z] = 1
+        for _ in range(env.spec.max_episode_steps):
+            action = agent.get_action(s, z_one_hot)
+            s_, r, done, _ = env.step(action)
+
+            episode_reward += r
+            if done:
+                break
+            s = s_
+            I = env.render(mode='rgb_array')
+            I = cv2.cvtColor(I, cv2.COLOR_RGB2BGR)
+            I = cv2.resize(I, (250, 250))
+            video_writer.write(I)
+        print(f"skill: {z}, episode reward:{episode_reward:.1f}")
+        video_writer.release()
+    env.close()
+    cv2.destroyAllWindows()
 
 
 def train_loop(env, args):
@@ -158,5 +178,5 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
 
     #########################################################################
-    train_loop(env, args)
-    # play(env, args)
+    # train_loop(env, args)
+    play(env, args)
