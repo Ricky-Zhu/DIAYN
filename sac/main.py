@@ -104,10 +104,6 @@ def train_loop(env, args):
                 d_loss = discriminator.update(data)
                 logq_zs.append(-d_loss)
 
-                # wandb.log({'discriminator loss': d_loss,
-                #            'actor loss': loss_pi,
-                #            'q1 loss': loss_q1,
-                #            'q2 loss': loss_q2}, step=total_interaction_steps)
         if len(logq_zs) > 0:
             logq_zs = sum(logq_zs) / len(logq_zs)
 
@@ -121,6 +117,9 @@ def train_loop(env, args):
                 episode_len
             ))
 
+            agent.save_model()
+            discriminator.save_model()
+
     agent.save_model()
     discriminator.save_model()
 
@@ -129,13 +128,11 @@ if __name__ == "__main__":
     import argparse
     import gym
     from goal_env.mujoco import *
-    from wrapper import WrapperDictEnv
 
     parser = argparse.ArgumentParser()
 
     # env parameters
-    # parser.add_argument('--env', type=str, default='Hopper-v2')
-    parser.add_argument('--env', type=str, default='AntEmpty-v0')
+    parser.add_argument('--env', type=str, default='Hopper-v2')
 
     # agent parameters
     parser.add_argument('--hidden-size', type=int, default=256)
