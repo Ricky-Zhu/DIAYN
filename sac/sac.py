@@ -72,8 +72,8 @@ class SACAgent:
         loss_pi = (self.args.alpha * a_new_logprobs - q_pi).mean()
         return loss_pi
 
-    def update(self, data):
-        o, a, r, o2, d, z_one_hot = data['obs'], data['act'], data['rew'], data['obs2'], data['done'], data['skills']
+    def update(self, o, a, r, o2, d, z_one_hot):
+
         loss_pi = self._compute_pi_loss(o, z_one_hot)
         loss_q1, loss_q2 = self._compute_q_loss(o, a, r, o2, d, z_one_hot)
 

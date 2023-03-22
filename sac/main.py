@@ -28,7 +28,7 @@ def play(env, args):
         os.makedirs("Vid/{}/".format(args.env))
 
     for z in range(args.skill_nums):
-        video_writer = cv2.VideoWriter("Vid/{}/skill{}".format(args.env,z) + ".avi", fourcc, 50.0, (250, 250))
+        video_writer = cv2.VideoWriter("Vid/{}/skill{}".format(args.env, z) + ".avi", fourcc, 50.0, (250, 250))
         s = env.reset()
         episode_reward = 0
         z_one_hot = np.zeros(args.skill_nums)
@@ -93,12 +93,15 @@ def train_loop(env, args):
             if buffer.current_size >= args.batch_size:
                 data = buffer.sample_batch(batch_size=args.batch_size)
 
-                # get the reward given in DIAYN
-                rewards = discriminator.get_score(data)
+                mn_batch_o, mn_batch_a, mn_batch_o2, mn_batch_d, mn_batch_z_one_hot = data['obs'], data['act'], \
+                    data['obs2'], data['done'], data['skills']
 
-                # replace the rewards part in data
-                data['rew'] = rewards
-                loss_pi, loss_q1, loss_q2 = agent.update(data)
+                # get the reward given in DIAYN
+                rewards = discriminator.get_score(mn_batch_o2, mn_batch_z_one_hot)
+
+                # use the generated rewards
+                loss_pi, loss_q1, loss_q2 = agent.update(o=mn_batch_o, a=mn_batch_a, r=rewards,
+                                                         o2=mn_batch_o2, d=mn_batch_d, z_one_hot=mn_batch_z_one_hot)
 
                 # update the discriminator
                 d_loss = discriminator.update(data)
@@ -127,7 +130,6 @@ def train_loop(env, args):
 if __name__ == "__main__":
     import argparse
     import gym
-    from goal_env.mujoco import *
 
     parser = argparse.ArgumentParser()
 
@@ -175,5 +177,5 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
 
     #########################################################################
-    #train_loop(env, args)
-    play(env, args)
+    train_loop(env, args)
+    # play(env, args)

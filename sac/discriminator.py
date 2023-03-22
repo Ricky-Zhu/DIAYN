@@ -24,9 +24,7 @@ class SkillDiscriminator(nn.Module):
         skill_logits = self.net(obs)
         return skill_logits
 
-    def get_score(self, data):
-        o2 = data['obs2']
-        z_one_hot = data['skills']
+    def get_score(self, o2,z_one_hot):
         pred_skills_logits = self(o2)  # get the predict logits of the skills
         targ_skill_probs = (self.softmax(pred_skills_logits.clone().detach()) * z_one_hot).sum(-1)
         score = torch.log(targ_skill_probs) - self.static_log_skill_prob
