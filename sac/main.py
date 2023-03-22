@@ -28,7 +28,7 @@ def play(env, args):
         os.makedirs("Vid/{}/".format(args.env))
 
     for z in range(args.skill_nums):
-        video_writer = cv2.VideoWriter(f"Vid/skill{z}" + ".avi", fourcc, 50.0, (250, 250))
+        video_writer = cv2.VideoWriter("Vid/{}/skill{}".format(args.env,z) + ".avi", fourcc, 50.0, (250, 250))
         s = env.reset()
         episode_reward = 0
         z_one_hot = np.zeros(args.skill_nums)
@@ -175,5 +175,5 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
 
     #########################################################################
-    train_loop(env, args)
-    # play(env, args)
+    #train_loop(env, args)
+    play(env, args)

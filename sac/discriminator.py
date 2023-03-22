@@ -18,7 +18,7 @@ class SkillDiscriminator(nn.Module):
         self.skill_nums = skill_nums
         self.optim = torch.optim.Adam(params=self.net.parameters(), lr=lr)
 
-        self.save_path = './sac_DIAYN/{}'.format(env_name)
+        self.save_path = './sac_DIAYN/{}/'.format(env_name)
 
     def forward(self, obs):
         skill_logits = self.net(obs)
