@@ -3,40 +3,55 @@ from discriminator import SkillDiscriminator
 from buffer import ReplayBuffer
 import numpy as np
 import torch
-import wandb
+import datetime
+import cv2
+import os
+from tqdm import tqdm
 
 
 def get_one_hot_encode_skill(skill_nums):
     skill = np.random.randint(skill_nums)
     skill_one_hot = np.zeros(skill_nums)
     skill_one_hot[skill] = 1
-    return skill_one_hot
+    return skill_one_hot, skill
 
 
 def play(env, args):
-    skill_nums = args.skill_nums
+    from mujoco_py import GlfwContext
+    GlfwContext(offscreen=True)
     agent = SACAgent(env, args)
     agent.load_model()
-    for skill in range(skill_nums):
-        skill_one_hot = np.zeros(skill_nums)
-        skill_one_hot[skill] = 1
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
 
-        obs = env.reset()
-        d = False
-        while not d:
-            a = agent.get_action(obs, skill_one_hot, deterministic=True)
+    # make the dir to store the videos
+    if not os.path.exists("Vid/{}/".format(args.env)):
+        os.makedirs("Vid/{}/".format(args.env))
 
-            img = env.render()
-            obs2, r, d, _ = env.step(a)
+    for z in range(args.skill_nums):
+        video_writer = cv2.VideoWriter("Vid/{}/skill{}".format(args.env, z) + ".avi", fourcc, 50.0, (250, 250))
+        s = env.reset()
+        episode_reward = 0
+        z_one_hot = np.zeros(args.skill_nums)
+        z_one_hot[z] = 1
+        for _ in range(env.spec.max_episode_steps):
+            action = agent.get_action(s, z_one_hot)
+            s_, r, done, _ = env.step(action)
+
+            episode_reward += r
+            if done:
+                break
+            s = s_
+            I = env.render(mode='rgb_array')
+            I = cv2.cvtColor(I, cv2.COLOR_RGB2BGR)
+            I = cv2.resize(I, (250, 250))
+            video_writer.write(I)
+        print(f"skill: {z}, episode reward:{episode_reward:.1f}")
+        video_writer.release()
+    env.close()
+    cv2.destroyAllWindows()
 
 
 def train_loop(env, args):
-    wandb.login()
-    wandb.init(
-        project="DIAYN_{}".format(args.env),
-        config=vars(args)
-    )
-
     agent = SACAgent(env, args)
     buffer = ReplayBuffer(env.observation_space.shape[0],
                           env.action_space.shape[0],
@@ -52,64 +67,79 @@ def train_loop(env, args):
 
     total_interaction_steps = 0
 
-    for epoch in range(args.total_epochs):
-        for ep in range(args.episodes_per_epoch):
-            o = env.reset()
+    for ep in tqdm(range(args.total_episodes)):
+        o = env.reset()
+        episode_rew = 0
+        episode_len = 0
 
-            # sample the skill, as the skill dist is uniform to ensure max entropy
-            # make the skill one-hot
-            z = get_one_hot_encode_skill(args.skill_nums)
-            logq_zs = []
+        # sample the skill, as the skill dist is uniform to ensure max entropy
+        # make the skill one-hot
+        z_one_hot, z = get_one_hot_encode_skill(args.skill_nums)
+        logq_zs = []
 
-            for i in range(args.max_episode_length):
-                a = agent.get_action(o, z)
-                o2, r, d, _ = env.step(a)  # the reward here is not going to be used
-                total_interaction_steps += 1
+        for i in range(args.max_episode_length):
+            a = agent.get_action(o, z_one_hot)
+            o2, r, d, _ = env.step(a)  # the reward here is not going to be used
 
-                buffer.store(o, a, r, o2, d, z)
-                o = o2
-                if d:
-                    break
+            episode_rew += r  # record the task rew
+            episode_len += 1
+            total_interaction_steps += 1
 
-                if buffer.current_size >= args.batch_size:
-                    data = buffer.sample_batch(batch_size=args.batch_size)
+            buffer.store(o, a, r, o2, d, z_one_hot)
+            o = o2
+            if d:
+                break
 
-                    # get the reward given in DIAYN
-                    rewards = discriminator.get_score(data)
-                    d_loss = discriminator.update(data)
-                    logq_zs.append(-d_loss)
+            if buffer.current_size >= args.batch_size:
+                data = buffer.sample_batch(batch_size=args.batch_size)
 
-                    # replace the rewards part in data
-                    data['rew'] = rewards
-                    loss_pi, loss_q1, loss_q2 = agent.update(data)
+                mn_batch_o, mn_batch_a, mn_batch_o2, mn_batch_d, mn_batch_z_one_hot = data['obs'], data['act'], \
+                    data['obs2'], data['done'], data['skills']
 
-                    wandb.log({'discriminator loss': d_loss,
-                               'actor loss': loss_pi,
-                               'q1 loss': loss_q1,
-                               'q2 loss': loss_q2}, step=total_interaction_steps)
-            if len(logq_zs) > 0:
-                wandb.log({'logq_zs': sum(logq_zs) / len(logq_zs)}, step=total_interaction_steps)
+                # get the reward given in DIAYN
+                rewards = discriminator.get_score(mn_batch_o2, mn_batch_z_one_hot)
 
-        agent.save_model()
-        discriminator.save_model()
+                # use the generated rewards
+                loss_pi, loss_q1, loss_q2 = agent.update(o=mn_batch_o, a=mn_batch_a, r=rewards,
+                                                         o2=mn_batch_o2, d=mn_batch_d, z_one_hot=mn_batch_z_one_hot)
+
+                # update the discriminator
+                d_loss = discriminator.update(data)
+                logq_zs.append(-d_loss)
+
+        if len(logq_zs) > 0:
+            logq_zs = sum(logq_zs) / len(logq_zs)
+
+        # display training results
+        if ep % args.display_episode_interval == 0:
+            print('time:{} | episode:{}, sampled skill:{}/{}, episode_reward:{}, episode length:{}'.format(
+                datetime.datetime.now().strftime("%H:%M:%S"),
+                ep,
+                z, args.skill_nums,
+                episode_rew,
+                episode_len
+            ))
+
+            agent.save_model()
+            discriminator.save_model()
+
+    agent.save_model()
+    discriminator.save_model()
 
 
 if __name__ == "__main__":
     import argparse
     import gym
-    from goal_env.mujoco import *
-    from wrapper import WrapperDictEnv
 
     parser = argparse.ArgumentParser()
 
     # env parameters
-    parser.add_argument('--env', type=str, default='Ant-v2')
-    # parser.add_argument('--env', type=str, default='AntEmpty-v0')
+    parser.add_argument('--env', type=str, default='Hopper-v2')
 
     # agent parameters
     parser.add_argument('--hidden-size', type=int, default=256)
     parser.add_argument('--gamma', type=float, default=0.99)
-    parser.add_argument('--alpha', type=float, default=0.2)
+    parser.add_argument('--alpha', type=float, default=0.1)
     parser.add_argument('--polyak', type=float, default=0.005)
     parser.add_argument('--q-lr', type=float, default=3e-4)
     parser.add_argument('--p-lr', type=float, default=3e-4)
@@ -126,14 +156,14 @@ if __name__ == "__main__":
 
     # training parameters
     parser.add_argument('--exp_name', type=str, default='sac')
-    parser.add_argument('--seed', '-s', type=int, default=44)
-    parser.add_argument('--total-epochs', type=int, default=300)
-    parser.add_argument('--episodes-per-epoch', type=int, default=1)
+    parser.add_argument('--seed', '-s', type=int, default=100)
+    parser.add_argument('--total-episodes', type=int, default=3000)
     parser.add_argument('--initialize-buffer-steps', type=int, default=10000)
     parser.add_argument('--max-episode-length', type=int, default=1000)
     parser.add_argument('--update-cycles', type=int, default=1000)
     parser.add_argument('--evaluate-interval-epochs', type=int, default=5)
     parser.add_argument('--evaluation-nums', type=int, default=5)
+    parser.add_argument('--display-episode-interval', type=int, default=100)
     args = parser.parse_args()
 
     ##########################################################################
